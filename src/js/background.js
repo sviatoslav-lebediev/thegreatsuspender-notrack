@@ -85,7 +85,7 @@ var tgs = (function() {
     retries = retries || 0;
     if (retries > 300) {
       // allow 30 seconds :scream:
-      chrome.tabs.create({ url: chrome.extension.getURL('broken.html') });
+      chrome.tabs.create({ url: chrome.runtime.getURL('broken.html') });
       return Promise.reject('Failed to initialise background scripts');
     }
     return new Promise(function(resolve) {
@@ -96,7 +96,7 @@ var tgs = (function() {
         return Promise.resolve();
       }
       return new Promise(function(resolve) {
-        window.setTimeout(resolve, 100);
+        setTimeout(resolve, 100);
       }).then(function() {
         retries += 1;
         return backgroundScriptsReadyAsPromised(retries);
@@ -111,6 +111,7 @@ var tgs = (function() {
       addMessageListeners();
       addChromeListeners();
       addMiscListeners();
+      addContextMenuListeners();
 
       //initialise unsuspended tab props
       resetAutoSuspendTimerForAllTabs();
@@ -144,17 +145,22 @@ var tgs = (function() {
   }
 
   function getInternalViewByTabId(tabId) {
-    const internalViews = chrome.extension.getViews({ tabId: tabId });
-    if (internalViews.length === 1) {
-      return internalViews[0];
+    if (chrome.extension.getViews) {
+      const internalViews = chrome.extension.getViews({ tabId: tabId });
+      if (internalViews.length === 1) {
+        return internalViews[0];
+      }
     }
     return null;
   }
   function getInternalViewsByViewName(viewName) {
-    const internalViews = chrome.extension
-      .getViews()
-      .filter(o => o.location.pathname.indexOf(viewName) >= 0);
-    return internalViews;
+    if (chrome.extension.getViews) {
+      const internalViews = chrome.extension
+        .getViews()
+        .filter(o => o.location.pathname.indexOf(viewName) >= 0);
+      return internalViews;
+    }
+    return [];
   }
 
   function getCurrentlyActiveTab(callback) {
@@ -1124,7 +1130,7 @@ var tgs = (function() {
           gsTabSuspendManager.unqueueTabForSuspension(focusedTab);
         }
       }
-    } else if (focusedTab.url === chrome.extension.getURL('options.html')) {
+    } else if (focusedTab.url === chrome.runtime.getURL('options.html')) {
       const optionsView = getInternalViewByTabId(focusedTab.id);
       if (optionsView && optionsView.exports) {
         optionsView.exports.initSettings();
@@ -1173,7 +1179,7 @@ var tgs = (function() {
   function promptForFilePermissions() {
     getCurrentlyActiveTab(activeTab => {
       chrome.tabs.create({
-        url: chrome.extension.getURL('permissions.html'),
+        url: chrome.runtime.getURL('permissions.html'),
         index: activeTab.index + 1,
       });
     });
@@ -1377,7 +1383,7 @@ var tgs = (function() {
     var icon = ![gsUtils.STATUS_NORMAL, gsUtils.STATUS_ACTIVE].includes(status)
       ? ICON_SUSPENSION_PAUSED
       : ICON_SUSPENSION_ACTIVE;
-    chrome.browserAction.setIcon({ path: icon, tabId: tabId }, function() {
+    chrome.action.setIcon({ path: icon, tabId: tabId }, function() {
       if (chrome.runtime.lastError) {
         gsUtils.warning(
           tabId,
@@ -1414,95 +1420,142 @@ var tgs = (function() {
       chrome.contextMenus.removeAll();
     } else {
       chrome.contextMenus.create({
+        id: 'open-link-in-suspended-tab',
         title: chrome.i18n.getMessage('js_context_open_link_in_suspended_tab'),
-        contexts: ['link'],
-        onclick: (info, tab) => {
-          openLinkInSuspendedTab(tab, info.linkUrl);
-        },
+        contexts: ['link']
       });
 
       chrome.contextMenus.create({
+        id: 'toggle-suspend-state',
         title: chrome.i18n.getMessage('js_context_toggle_suspend_state'),
-        contexts: allContexts,
-        onclick: () => toggleSuspendedStateOfHighlightedTab(),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'toggle-pause-suspension',
         title: chrome.i18n.getMessage('js_context_toggle_pause_suspension'),
-        contexts: allContexts,
-        onclick: () => requestToggleTempWhitelistStateOfHighlightedTab(),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'never-suspend-page',
         title: chrome.i18n.getMessage('js_context_never_suspend_page'),
-        contexts: allContexts,
-        onclick: () => whitelistHighlightedTab(true),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'never-suspend-domain',
         title: chrome.i18n.getMessage('js_context_never_suspend_domain'),
-        contexts: allContexts,
-        onclick: () => whitelistHighlightedTab(false),
+        contexts: allContexts
       });
 
       chrome.contextMenus.create({
+        id: 'separator-1',
         type: 'separator',
-        contexts: allContexts,
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'suspend-selected-tabs',
         title: chrome.i18n.getMessage('js_context_suspend_selected_tabs'),
-        contexts: allContexts,
-        onclick: () => suspendSelectedTabs(),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'unsuspend-selected-tabs',
         title: chrome.i18n.getMessage('js_context_unsuspend_selected_tabs'),
-        contexts: allContexts,
-        onclick: () => unsuspendSelectedTabs(),
+        contexts: allContexts
       });
 
       chrome.contextMenus.create({
+        id: 'separator-2',
         type: 'separator',
-        contexts: allContexts,
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'soft-suspend-other-tabs-window',
         title: chrome.i18n.getMessage(
           'js_context_soft_suspend_other_tabs_in_window'
         ),
-        contexts: allContexts,
-        onclick: () => suspendAllTabs(false),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'force-suspend-other-tabs-window',
         title: chrome.i18n.getMessage(
           'js_context_force_suspend_other_tabs_in_window'
         ),
-        contexts: allContexts,
-        onclick: () => suspendAllTabs(true),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'unsuspend-all-tabs-window',
         title: chrome.i18n.getMessage(
           'js_context_unsuspend_all_tabs_in_window'
         ),
-        contexts: allContexts,
-        onclick: () => unsuspendAllTabs(),
+        contexts: allContexts
       });
 
       chrome.contextMenus.create({
+        id: 'separator-3',
         type: 'separator',
-        contexts: allContexts,
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'soft-suspend-all-tabs',
         title: chrome.i18n.getMessage('js_context_soft_suspend_all_tabs'),
-        contexts: allContexts,
-        onclick: () => suspendAllTabsInAllWindows(false),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'force-suspend-all-tabs',
         title: chrome.i18n.getMessage('js_context_force_suspend_all_tabs'),
-        contexts: allContexts,
-        onclick: () => suspendAllTabsInAllWindows(true),
+        contexts: allContexts
       });
       chrome.contextMenus.create({
+        id: 'unsuspend-all-tabs',
         title: chrome.i18n.getMessage('js_context_unsuspend_all_tabs'),
-        contexts: allContexts,
-        onclick: () => unsuspendAllTabsInAllWindows(),
+        contexts: allContexts
       });
     }
+  }
+
+  function addContextMenuListeners() {
+    chrome.contextMenus.onClicked.addListener((info, tab) => {
+      switch (info.menuItemId) {
+        case 'open-link-in-suspended-tab':
+          openLinkInSuspendedTab(tab, info.linkUrl);
+          break;
+        case 'toggle-suspend-state':
+          toggleSuspendedStateOfHighlightedTab();
+          break;
+        case 'toggle-pause-suspension':
+          requestToggleTempWhitelistStateOfHighlightedTab();
+          break;
+        case 'never-suspend-page':
+          whitelistHighlightedTab(true);
+          break;
+        case 'never-suspend-domain':
+          whitelistHighlightedTab(false);
+          break;
+        case 'suspend-selected-tabs':
+          suspendSelectedTabs();
+          break;
+        case 'unsuspend-selected-tabs':
+          unsuspendSelectedTabs();
+          break;
+        case 'soft-suspend-other-tabs-window':
+          suspendAllTabs(false);
+          break;
+        case 'force-suspend-other-tabs-window':
+          suspendAllTabs(true);
+          break;
+        case 'unsuspend-all-tabs-window':
+          unsuspendAllTabs();
+          break;
+        case 'soft-suspend-all-tabs':
+          suspendAllTabsInAllWindows(false);
+          break;
+        case 'force-suspend-all-tabs':
+          suspendAllTabsInAllWindows(true);
+          break;
+        case 'unsuspend-all-tabs':
+          unsuspendAllTabsInAllWindows();
+          break;
+      }
+    });
   }
 
   //HANDLERS FOR KEYBOARD SHORTCUTS
@@ -1536,13 +1589,19 @@ var tgs = (function() {
   //HANDLERS FOR MESSAGE REQUESTS
 
   function messageRequestListener(request, sender, sendResponse) {
+    const tabId = sender.tab ? sender.tab.id : 'popup';
     gsUtils.log(
-      sender.tab.id,
+      tabId,
       'background messageRequestListener',
       request.action
     );
 
     switch (request.action) {
+      case 'getActiveTabStatus':
+        getActiveTabStatus(function(status) {
+          sendResponse({status: status});
+        });
+        return true;
       case 'loadCleanScreencaptureBlocklist':
         gsCleanScreencaps.loadList()
       case 'reportTabState':
@@ -1692,7 +1751,7 @@ var tgs = (function() {
 
       var noticeToDisplay = requestNotice();
       if (noticeToDisplay) {
-        chrome.tabs.create({ url: chrome.extension.getURL('notice.html') });
+        chrome.tabs.create({ url: chrome.runtime.getURL('notice.html') });
       }
     });
     chrome.windows.onRemoved.addListener(function(windowId) {
@@ -1724,7 +1783,7 @@ var tgs = (function() {
     }
 
     //add listeners for online/offline state changes
-    window.addEventListener('online', function() {
+    self.addEventListener('online', function() {
       gsUtils.log('background', 'Internet is online.');
       //restart timer on all normal tabs
       //NOTE: some tabs may have been prevented from suspending when internet was offline
@@ -1733,7 +1792,7 @@ var tgs = (function() {
       }
       setIconStatusForActiveTab();
     });
-    window.addEventListener('offline', function() {
+    self.addEventListener('offline', function() {
       gsUtils.log('background', 'Internet is offline.');
       setIconStatusForActiveTab();
     });
@@ -1741,7 +1800,7 @@ var tgs = (function() {
 
   function startSessionMetricsJob() {
     gsSession.updateSessionMetrics(true);
-    window.setInterval(
+    setInterval(
       gsSession.updateSessionMetrics,
       sessionMetricsCheckInterval
     );
@@ -1797,32 +1856,4 @@ var tgs = (function() {
   };
 })();
 
-Promise.resolve()
-  .then(tgs.backgroundScriptsReadyAsPromised) // wait until all gsLibs have loaded
-  .then(gsStorage.initSettingsAsPromised) // ensure settings have been loaded and synced
-  .then(gsStorage.checkManagedStorageAndOverride) // enforce managed settings
-  .then(() => {
-    // initialise other gsLibs
-    return Promise.all([
-      gsFavicon.initAsPromised(),
-      gsTabSuspendManager.initAsPromised(),
-      gsTabCheckManager.initAsPromised(),
-      gsTabDiscardManager.initAsPromised(),
-      gsSession.initAsPromised(),
-      gsCleanScreencaps.initAsPromised()
-    ]);
-  })
-  .catch(error => {
-    gsUtils.error('background init error: ', error);
-  })
-  .then(gsSession.runStartupChecks) // performs crash check (and maybe recovery) and tab responsiveness checks
-  .catch(error => {
-    gsUtils.error('background startup checks error: ', error);
-  })
-  .then(tgs.initAsPromised) // adds handle(Un)SuspendedTabChanged listeners!
-  .catch(error => {
-    gsUtils.error('background init error: ', error);
-  })
-  .finally(() => {
-    tgs.startTimers();
-  });
+// Initialization is now handled by the service worker

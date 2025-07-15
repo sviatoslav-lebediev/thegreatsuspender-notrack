@@ -27,11 +27,11 @@ var gsFavicon = (function() {
     const defaultIconUrls = [
       generateChromeFavIconUrlFromUrl('http://chromeDefaultFavicon'),
       generateChromeFavIconUrlFromUrl('chromeDefaultFavicon'),
-      chrome.extension.getURL('img/ic_suspendy_16x16.png'),
-      chrome.extension.getURL('img/chromeDefaultFavicon.png'),
-      chrome.extension.getURL('img/chromeDefaultFaviconSml.png'),
-      chrome.extension.getURL('img/chromeDevDefaultFavicon.png'),
-      chrome.extension.getURL('img/chromeDevDefaultFaviconSml.png'),
+      chrome.runtime.getURL('img/ic_suspendy_16x16.png'),
+      chrome.runtime.getURL('img/chromeDefaultFavicon.png'),
+      chrome.runtime.getURL('img/chromeDefaultFaviconSml.png'),
+      chrome.runtime.getURL('img/chromeDevDefaultFavicon.png'),
+      chrome.runtime.getURL('img/chromeDevDefaultFaviconSml.png'),
     ];
 
     const faviconPromises = [];
@@ -86,12 +86,14 @@ var gsFavicon = (function() {
   }
 
   async function addFaviconMetaToDefaultFingerprints(faviconMeta, id) {
-    _defaultFaviconFingerprintById[id] = await createImageFingerprint(
-      faviconMeta.normalisedDataUrl
-    );
-    _defaultFaviconFingerprintById[
-      id + 'Transparent'
-    ] = await createImageFingerprint(faviconMeta.transparentDataUrl);
+    if (faviconMeta && faviconMeta.normalisedDataUrl) {
+      _defaultFaviconFingerprintById[id] = await createImageFingerprint(
+        faviconMeta.normalisedDataUrl
+      );
+      _defaultFaviconFingerprintById[
+        id + 'Transparent'
+      ] = await createImageFingerprint(faviconMeta.transparentDataUrl);
+    }
   }
 
   function generateChromeFavIconUrlFromUrl(url) {
@@ -138,7 +140,7 @@ var gsFavicon = (function() {
     );
     if (
       tab.favIconUrl &&
-      tab.favIconUrl !== chrome.extension.getURL('img/ic_suspendy_16x16.png')
+      tab.favIconUrl !== chrome.runtime.getURL('img/ic_suspendy_16x16.png')
     ) {
       faviconMeta = await buildFaviconMetaFromTabFavIconUrl(tab.favIconUrl);
       if (faviconMeta) {

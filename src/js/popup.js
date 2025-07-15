@@ -2,7 +2,7 @@
 (function(global) {
   'use strict';
 
-  chrome.extension.getBackgroundPage().tgs.setViewGlobals(global);
+initializeBackgroundPageGlobals(global);
 
   var globalActionElListener;
 
@@ -321,7 +321,7 @@
       .getElementById('settingsLink')
       .addEventListener('click', function(e) {
         chrome.tabs.create({
-          url: chrome.extension.getURL('options.html'),
+          url: chrome.runtime.getURL('options.html'),
         });
         window.close();
       });

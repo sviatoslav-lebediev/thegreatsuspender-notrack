@@ -130,13 +130,29 @@ var gsMessages = {
       if (callback) callback('tabId not specified');
       return;
     }
-    chrome.tabs.executeScript(tabId, { file: scriptPath }, function(response) {
-      if (chrome.runtime.lastError) {
-        if (callback) callback(chrome.runtime.lastError);
-      } else {
-        if (callback) callback(null, response);
-      }
-    });
+    
+    if (chrome.scripting) {
+      // Manifest V3 - use chrome.scripting API
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: [scriptPath]
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          if (callback) callback(chrome.runtime.lastError);
+        } else {
+          if (callback) callback(null, response);
+        }
+      });
+    } else {
+      // Manifest V2 fallback
+      chrome.tabs.executeScript(tabId, { file: scriptPath }, function(response) {
+        if (chrome.runtime.lastError) {
+          if (callback) callback(chrome.runtime.lastError);
+        } else {
+          if (callback) callback(null, response);
+        }
+      });
+    }
   },
 
   executeCodeOnTab: function(tabId, codeString, callback) {
@@ -144,12 +160,36 @@ var gsMessages = {
       if (callback) callback('tabId not specified');
       return;
     }
-    chrome.tabs.executeScript(tabId, { code: codeString }, function(response) {
-      if (chrome.runtime.lastError) {
-        if (callback) callback(chrome.runtime.lastError);
-      } else {
-        if (callback) callback(null, response);
-      }
-    });
+    
+    if (chrome.scripting) {
+      // Manifest V3 - use chrome.scripting API
+      // We need to avoid new Function() due to CSP restrictions
+      // Instead, we'll inject the code as a string and use a wrapper
+      chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        func: function(code) {
+          // This runs in the page context, not extension context
+          return eval(code);
+        },
+        args: [codeString]
+      }, function(response) {
+        if (chrome.runtime.lastError) {
+          if (callback) callback(chrome.runtime.lastError);
+        } else {
+          // In V3, response is an array of results
+          const result = response && response[0] ? response[0].result : null;
+          if (callback) callback(null, result);
+        }
+      });
+    } else {
+      // Manifest V2 fallback
+      chrome.tabs.executeScript(tabId, { code: codeString }, function(response) {
+        if (chrome.runtime.lastError) {
+          if (callback) callback(chrome.runtime.lastError);
+        } else {
+          if (callback) callback(null, response);
+        }
+      });
+    }
   },
 };

@@ -1,8 +1,188 @@
 /*global chrome, gsStorage, gsChrome, gsUtils */
 (function(global) {
   try {
-    chrome.extension.getBackgroundPage().tgs.setViewGlobals(global);
+    // In Manifest V3, we can't access service worker globals directly
+    // Instead, we need to use messaging to get what we need
+    const backgroundPage = chrome.extension.getBackgroundPage && chrome.extension.getBackgroundPage();
+    if (backgroundPage && backgroundPage.tgs) {
+      backgroundPage.tgs.setViewGlobals(global);
+    } else {
+      // For Manifest V3, import the globals differently
+      // We'll need to access them through chrome.runtime messaging
+      console.log('Manifest V3 mode - using alternative global access');
+      
+      // Create basic stubs that will be populated via messaging
+      global.gsStorage = {
+        getOption: function(key) {
+          // This will be synchronous access to our localStorage polyfill
+          const settings = JSON.parse(localStorage.getItem('gsSettings') || '{}');
+          
+          // Provide default values if not set
+          const defaults = {
+            'screenCapture': '0',
+            'screenCaptureForce': false,
+            'cleanScreencaps': false,
+            'suspendInPlaceOfDiscard': false,
+            'onlineCheck': false,
+            'batteryCheck': false,
+            'gsUnsuspendOnFocus': false,
+            'discardAfterSuspend': false,
+            'gsDontSuspendPinned': true,
+            'gsDontSuspendForms': true,
+            'gsDontSuspendAudio': true,
+            'gsDontSuspendActiveTabs': true,
+            'gsIgnoreCache': false,
+            'gsAddContextMenu': true,
+            'gsSyncSettings': true,
+            'gsNoNag': false,
+            'gsTimeToSuspend': '60',
+            'gsTheme': 'light',
+            'gsWhitelist': ''
+          };
+          
+          return settings[key] !== undefined ? settings[key] : defaults[key];
+        },
+        setOption: function(key, value) {
+          const settings = JSON.parse(localStorage.getItem('gsSettings') || '{}');
+          settings[key] = value;
+          localStorage.setItem('gsSettings', JSON.stringify(settings));
+        },
+        setOptionAndSync: function(key, value) {
+          this.setOption(key, value);
+          // In a full implementation, this would sync to chrome.storage.sync
+          chrome.runtime.sendMessage({
+            action: 'syncSettings',
+            key: key,
+            value: value
+          });
+        },
+        isOptionManaged: function(key) {
+          return false; // Simplified for now
+        },
+        // Add other storage constants
+        SCREEN_CAPTURE: 'screenCapture',
+        SCREEN_CAPTURE_FORCE: 'screenCaptureForce',
+        ENABLE_CLEAN_SCREENCAPS: 'cleanScreencaps',
+        SUSPEND_IN_PLACE_OF_DISCARD: 'suspendInPlaceOfDiscard',
+        IGNORE_WHEN_OFFLINE: 'onlineCheck',
+        IGNORE_WHEN_CHARGING: 'batteryCheck',
+        UNSUSPEND_ON_FOCUS: 'gsUnsuspendOnFocus',
+        DISCARD_AFTER_SUSPEND: 'discardAfterSuspend',
+        IGNORE_PINNED: 'gsDontSuspendPinned',
+        IGNORE_FORMS: 'gsDontSuspendForms',
+        IGNORE_AUDIO: 'gsDontSuspendAudio',
+        IGNORE_ACTIVE_TABS: 'gsDontSuspendActiveTabs',
+        IGNORE_CACHE: 'gsIgnoreCache',
+        ADD_CONTEXT: 'gsAddContextMenu',
+        SYNC_SETTINGS: 'gsSyncSettings',
+        NO_NAG: 'gsNoNag',
+        SUSPEND_TIME: 'gsTimeToSuspend',
+        THEME: 'gsTheme',
+        WHITELIST: 'gsWhitelist'
+      };
+      
+      global.gsUtils = {
+        cleanupWhitelist: function(whitelist) {
+          var whitelistItems = whitelist ? whitelist.split(/[\s\n]+/).sort() : '';
+          // Remove duplicates and empty items
+          var cleanItems = [];
+          for (var i = 0; i < whitelistItems.length; i++) {
+            if (whitelistItems[i] && whitelistItems[i] !== '' && cleanItems.indexOf(whitelistItems[i]) === -1) {
+              cleanItems.push(whitelistItems[i]);
+            }
+          }
+          return cleanItems.length ? cleanItems.join('\n') : '';
+        },
+        performPostSaveUpdates: function(keys, oldValues, newValues) {
+          // Send message to service worker to handle updates
+          chrome.runtime.sendMessage({
+            action: 'postSaveUpdates',
+            keys: keys,
+            oldValues: oldValues,
+            newValues: newValues
+          });
+        },
+        documentReadyAndLocalisedAsPromsied: function(doc) {
+          return new Promise(function(resolve) {
+            if (doc.readyState !== 'loading') {
+              resolve();
+            } else {
+              doc.addEventListener('DOMContentLoaded', function() {
+                resolve();
+              });
+            }
+          }).then(function() {
+            // Localize HTML
+            var replaceTagFunc = function(match, p1) {
+              return p1 ? chrome.i18n.getMessage(p1) : '';
+            };
+            for (let el of doc.getElementsByTagName('*')) {
+              if (el.hasAttribute('data-i18n')) {
+                el.innerHTML = el
+                  .getAttribute('data-i18n')
+                  .replace(/__MSG_(\w+)__/g, replaceTagFunc)
+                  .replace(/\n/g, '<br />');
+              }
+              if (el.hasAttribute('data-i18n-tooltip')) {
+                el.setAttribute(
+                  'data-i18n-tooltip',
+                  el
+                    .getAttribute('data-i18n-tooltip')
+                    .replace(/__MSG_(\w+)__/g, replaceTagFunc)
+                );
+              }
+            }
+            if (doc.body && doc.body.hidden) {
+              doc.body.hidden = false;
+            }
+          });
+        },
+        debounce: function(func, wait) {
+          let timeout;
+          return function() {
+            const context = this;
+            const args = arguments;
+            clearTimeout(timeout);
+            timeout = setTimeout(function() {
+              func.apply(context, args);
+            }, wait);
+          };
+        },
+        isSuspendedTab: function(tab) {
+          return tab.url && tab.url.indexOf('suspended.html') > 0;
+        },
+        isSuspendedUrl: function(url) {
+          return url && url.indexOf('suspended.html') > 0;
+        },
+        getOriginalUrl: function(url) {
+          // Simple extraction from suspended URL
+          const match = url.match(/uri=([^&]+)/);
+          return match ? decodeURIComponent(match[1]) : url;
+        },
+        checkWhiteList: function(url) {
+          const whitelist = global.gsStorage.getOption(global.gsStorage.WHITELIST) || '';
+          const whitelistItems = whitelist.split(/[\s\n]+/);
+          return whitelistItems.some(item => {
+            if (!item) return false;
+            try {
+              return new RegExp(item).test(url);
+            } catch (e) {
+              return url.indexOf(item) >= 0;
+            }
+          });
+        }
+      };
+      
+      global.gsChrome = {
+        tabsQuery: function(queryInfo) {
+          return new Promise(function(resolve) {
+            chrome.tabs.query(queryInfo || {}, resolve);
+          });
+        }
+      };
+    }
   } catch (e) {
+    console.error('Failed to initialize options page:', e);
     window.setTimeout(() => window.location.reload(), 1000);
     return;
   }
